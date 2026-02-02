@@ -31,12 +31,13 @@ def get_holiday_for_weekend(saturday, year):
     us_holidays = holidays.US(categories=(PUBLIC, UNOFFICIAL, GOVERNMENT), years=year)
 
     # Check Thursday through Monday (5 day window)
+    thursday = saturday - timedelta(days=2)
     friday = saturday - timedelta(days=1)
     sunday = saturday + timedelta(days=1)
     monday = saturday + timedelta(days=2)
 
     holiday_names = []
-    for day in [friday, saturday, sunday, monday]:
+    for day in [thursday, friday, saturday, sunday, monday]:
         if day in us_holidays:
             holiday_names.append(us_holidays[day])
 
@@ -141,9 +142,11 @@ def find_moon_rise_set(date, location, timezone):
     return rise_str, set_str
 
 
-def find_event_time(date, location, timezone, body_name, event_type="set"):
+def find_event_time(
+    date, location, timezone, body_name, event_type="set", altitude_threshold=0
+):
     """
-    Find the time when a celestial body rises or sets.
+    Find the time when a celestial body rises or sets, or crosses a specific altitude.
 
     Args:
         date: The date to search
@@ -151,6 +154,7 @@ def find_event_time(date, location, timezone, body_name, event_type="set"):
         timezone: ZoneInfo timezone
         body_name: 'sun' or 'moon'
         event_type: 'rise' or 'set'
+        altitude_threshold: Altitude in degrees (default 0 for horizon)
 
     Returns:
         Time string in HH:MM format or "N/A"
@@ -178,10 +182,14 @@ def find_event_time(date, location, timezone, body_name, event_type="set"):
         altaz = body.transform_to(AltAz(obstime=astro_time, location=location))
         current_alt = altaz.alt.degree
 
-        # Detect crossing the horizon
+        # Detect crossing the threshold altitude
         if prev_alt is not None:
-            if event_type == "set" and prev_alt > 0 and current_alt <= 0:
-                # Setting: going below horizon
+            if (
+                event_type == "set"
+                and prev_alt > altitude_threshold
+                and current_alt <= altitude_threshold
+            ):
+                # Setting: going below threshold
                 # Refine to the minute
                 event_time = refine_event_time(
                     current_time - timedelta(minutes=step),
@@ -190,10 +198,15 @@ def find_event_time(date, location, timezone, body_name, event_type="set"):
                     timezone,
                     body_name,
                     "set",
+                    altitude_threshold,
                 )
                 break
-            elif event_type == "rise" and prev_alt < 0 and current_alt >= 0:
-                # Rising: going above horizon
+            elif (
+                event_type == "rise"
+                and prev_alt < altitude_threshold
+                and current_alt >= altitude_threshold
+            ):
+                # Rising: going above threshold
                 event_time = refine_event_time(
                     current_time - timedelta(minutes=step),
                     current_time,
@@ -201,6 +214,7 @@ def find_event_time(date, location, timezone, body_name, event_type="set"):
                     timezone,
                     body_name,
                     "rise",
+                    altitude_threshold,
                 )
                 break
 
@@ -215,7 +229,15 @@ def find_event_time(date, location, timezone, body_name, event_type="set"):
     return "N/A"
 
 
-def refine_event_time(start_time, end_time, location, timezone, body_name, event_type):
+def refine_event_time(
+    start_time,
+    end_time,
+    location,
+    timezone,
+    body_name,
+    event_type,
+    altitude_threshold=0,
+):
     """
     Refine the event time to the nearest minute between start and end time.
     Returns the midpoint for speed.
@@ -223,6 +245,24 @@ def refine_event_time(start_time, end_time, location, timezone, body_name, event
     # Just return the midpoint for speed
     delta = (end_time - start_time) / 2
     return start_time + delta
+
+
+def find_astronomical_twilight(date, location, timezone):
+    """
+    Find the time when astronomical twilight ends (dusk).
+    This is when the sun reaches -12 degrees below the horizon.
+
+    Args:
+        date: The date to search
+        location: EarthLocation object
+        timezone: ZoneInfo timezone
+
+    Returns:
+        Time string in HH:MM format or "N/A"
+    """
+    return find_event_time(
+        date, location, timezone, "sun", "set", altitude_threshold=-12
+    )
 
 
 def calculate_moon_illumination(date, location, timezone, sunset_time=None):
@@ -300,6 +340,7 @@ def main():
         print(f"Processing {saturday} ({i}/{len(saturdays)})...", end="\r", flush=True)
 
         sunset = find_event_time(saturday, location, timezone, "sun", "set")
+        astro_twilight = find_astronomical_twilight(saturday, location, timezone)
         moonrise, moonset = find_moon_rise_set(saturday, location, timezone)
         moon_illum = calculate_moon_illumination(saturday, location, timezone, sunset)
         holiday = get_holiday_for_weekend(saturday, year)
@@ -308,6 +349,7 @@ def main():
             {
                 "date": saturday.strftime("%Y-%m-%d"),
                 "sun_set_time": sunset,
+                "astro_twilight": astro_twilight,
                 "moon_rise_time": moonrise,
                 "moon_set_time": moonset,
                 "moon_illumination_percent": moon_illum,
@@ -322,6 +364,7 @@ def main():
         fieldnames = [
             "date",
             "sun_set_time",
+            "astro_twilight",
             "moon_rise_time",
             "moon_set_time",
             "moon_illumination_percent",
