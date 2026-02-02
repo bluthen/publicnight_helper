@@ -239,12 +239,55 @@ def refine_event_time(
     altitude_threshold=0,
 ):
     """
-    Refine the event time to the nearest minute between start and end time.
-    Returns the midpoint for speed.
+    Use binary search to find the exact time when a celestial body
+    crosses the altitude threshold.
+
+    Refines to within ~1 second precision, then rounds to nearest minute.
+
+    Args:
+        start_time: Start of the time bracket (datetime with timezone)
+        end_time: End of the time bracket (datetime with timezone)
+        location: EarthLocation object
+        timezone: ZoneInfo timezone
+        body_name: 'sun' or 'moon'
+        event_type: 'rise' or 'set'
+        altitude_threshold: Altitude in degrees (default 0 for horizon)
+
+    Returns:
+        datetime object rounded to nearest minute
     """
-    # Just return the midpoint for speed
-    delta = (end_time - start_time) / 2
-    return start_time + delta
+    # Binary search: narrow down to 1-second precision
+    while (end_time - start_time).total_seconds() > 1:
+        mid_time = start_time + (end_time - start_time) / 2
+
+        # Check altitude at midpoint
+        astro_time = Time(mid_time)
+        if body_name == "sun":
+            body = get_sun(astro_time)
+        else:
+            body = get_body("moon", astro_time, location)
+
+        altaz = body.transform_to(AltAz(obstime=astro_time, location=location))
+        mid_alt = altaz.alt.degree
+
+        # Determine which half contains the crossing
+        if event_type == "set":
+            if mid_alt > altitude_threshold:
+                start_time = mid_time  # Crossing is in second half
+            else:
+                end_time = mid_time  # Crossing is in first half
+        else:  # rise
+            if mid_alt < altitude_threshold:
+                start_time = mid_time  # Crossing is in second half
+            else:
+                end_time = mid_time  # Crossing is in first half
+
+    # Return the midpoint rounded to nearest minute
+    final_time = start_time + (end_time - start_time) / 2
+    # Round to nearest minute
+    if final_time.second >= 30:
+        final_time += timedelta(minutes=1)
+    return final_time.replace(second=0, microsecond=0)
 
 
 def find_astronomical_twilight(date, location, timezone):
